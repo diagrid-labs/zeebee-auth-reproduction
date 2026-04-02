@@ -4,6 +4,12 @@ Small repro: Dapr **Zeebe command** binding + mocks. The OAuth server returns **
 
 Example: **`oauth_token_posts`** **`0` → `1`** after several topology invokes (reuse within TTL), then **`1` → `2`** after **`sleep 50`** and more invokes past the short expiry. **`credentials.yaml`** is readable from the **app** container (`daprd` is distroless).
 
+**Layout:**
+
+- **OAuth mock** — fake token issuer (`POST /token`, **`/stats`**); mirrors identity separate from the broker.
+- **Zeebe mock** — fake Zeebe gateway (gRPC); no real Camunda cluster needed.
+- **`k8s/oauth-mock.yaml`**, **`k8s/zeebe-mock.yaml`**, **`k8s/app.yaml`** — one Deployment each: the two mocks are those backends; **`app`** is the workload + **`daprd`** (Zeebe binding, credential cache).
+
 ---
 
 ## Setup

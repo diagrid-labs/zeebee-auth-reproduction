@@ -1,8 +1,3 @@
-# Placeholder app + Dapr sidecar (injector adds daprd).
-# - dapr.io/env: comma-separated KEY=value (not JSON — injector parses KEY=value,KEY2=value2).
-# - dapr.io/volume-mounts-rw: mounts camunda-cache at /camunda on daprd (writable; distroless — no shell/cat).
-# - Same volume is mounted read-only on the app container at /camunda so you can kubectl exec -c app -- cat ...
-# - emptyDir + initContainer seed ZEEBE_CLIENT_CONFIG_PATH so Camunda OAuth YAML cache is writable.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
