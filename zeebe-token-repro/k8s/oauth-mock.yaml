@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth-mock
+  namespace: zeebe-token-repro
+  labels:
+    app: oauth-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oauth-mock
+  template:
+    metadata:
+      labels:
+        app: oauth-mock
+    spec:
+      containers:
+        - name: oauth-mock
+          image: zeebe-token-repro-oauth-mock:latest
+          imagePullPolicy: Never
+          env:
+            # Short TTL so you can see token refresh in a few minutes (rebuild image after app.py change).
+            - name: OAUTH_EXPIRES_IN_SECONDS
+              value: "45"
+          ports:
+            - containerPort: 8080
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oauth-mock
+  namespace: zeebe-token-repro
+spec:
+  selector:
+    app: oauth-mock
+  ports:
+    - port: 8080
+      targetPort: http

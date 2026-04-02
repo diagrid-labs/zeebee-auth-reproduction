@@ -1,0 +1,12 @@
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: zeebe-cmd
+spec:
+  type: bindings.zeebe.command
+  version: v1
+  metadata:
+    - name: gatewayAddr
+      value: "zeebe-mock:26500"
+    - name: usePlainTextConnection
+      value: "true"

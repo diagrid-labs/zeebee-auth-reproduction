@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zeebe-mock
+  namespace: zeebe-token-repro
+  labels:
+    app: zeebe-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zeebe-mock
+  template:
+    metadata:
+      labels:
+        app: zeebe-mock
+    spec:
+      containers:
+        - name: zeebe-mock
+          image: zeebe-token-repro-zeebe-mock:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 26500
+              name: grpc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zeebe-mock
+  namespace: zeebe-token-repro
+spec:
+  selector:
+    app: zeebe-mock
+  ports:
+    - port: 26500
+      targetPort: grpc

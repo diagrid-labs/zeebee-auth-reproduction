@@ -1,0 +1,70 @@
+# Placeholder app + Dapr sidecar (injector adds daprd).
+# - dapr.io/env: comma-separated KEY=value (not JSON — injector parses KEY=value,KEY2=value2).
+# - dapr.io/volume-mounts-rw: mounts camunda-cache at /camunda on daprd (writable; distroless — no shell/cat).
+# - Same volume is mounted read-only on the app container at /camunda so you can kubectl exec -c app -- cat ...
+# - emptyDir + initContainer seed ZEEBE_CLIENT_CONFIG_PATH so Camunda OAuth YAML cache is writable.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zeebe-test-app
+  namespace: zeebe-token-repro
+  labels:
+    app: zeebe-test-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zeebe-test-app
+  template:
+    metadata:
+      labels:
+        app: zeebe-test-app
+      annotations:
+        dapr.io/enabled: "true"
+        dapr.io/app-id: "zeebe-stack-app"
+        dapr.io/app-port: "3000"
+        dapr.io/log-level: "info"
+        dapr.io/config: "dapr-config"
+        dapr.io/volume-mounts-rw: "camunda-cache:/camunda"
+        dapr.io/env: "ZEEBE_CLIENT_ID=test-client,ZEEBE_CLIENT_SECRET=test-secret,ZEEBE_AUTHORIZATION_SERVER_URL=http://oauth-mock:8080/token,ZEEBE_TOKEN_AUDIENCE=zeebe-audience,ZEEBE_CLIENT_CONFIG_PATH=/camunda/credentials.yaml"
+    spec:
+      initContainers:
+        - name: seed-camunda-oauth-cache
+          image: busybox:1.36
+          command: ["sh", "-c", "echo '{}' > /camunda/credentials.yaml && chmod 666 /camunda/credentials.yaml"]
+          volumeMounts:
+            - name: camunda-cache
+              mountPath: /camunda
+      volumes:
+        - name: camunda-cache
+          emptyDir: {}
+      containers:
+        - name: app
+          image: python:3.12-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-m", "http.server", "3000"]
+          workingDir: /tmp
+          ports:
+            - containerPort: 3000
+              name: http
+          volumeMounts:
+            - name: camunda-cache
+              mountPath: /camunda
+              readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zeebe-test-app
+  namespace: zeebe-token-repro
+spec:
+  selector:
+    app: zeebe-test-app
+  ports:
+    - port: 3000
+      targetPort: http
+      name: http
+    # Numeric port avoids mismatch if the injector names the sidecar port differently.
+    - port: 3500
+      targetPort: 3500
+      name: dapr-http
