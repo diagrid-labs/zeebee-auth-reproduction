@@ -1,26 +1,23 @@
 # Zeebe OAuth token reuse (Dapr, Kubernetes)
 
-Small repro: Dapr Zeebe command binding plus HTTP and gRPC mocks so you can watch OAuth token reuse without a real Camunda cluster.
+In this repro you run the Zeebe command output binding against mock OAuth and mock Zeebe gateways. The Camunda client on `daprd` caches OAuth tokens under `/camunda/credentials.yaml`; the OAuth mock counts `POST /token` so you can see reuse until `expires_in` (from `OAUTH_EXPIRES_IN_SECONDS`, 45s in `k8s/oauth-mock.yaml`) passes.
 
-- OAuth mock returns `expires_in` from `OAUTH_EXPIRES_IN_SECONDS` (45s in `k8s/oauth-mock.yaml`).
-- The Camunda Zeebe client caches tokens at `ZEEBE_CLIENT_CONFIG_PATH` → `/camunda/credentials.yaml` on `daprd`.
-- `GET /stats` on the OAuth mock reports `oauth_token_posts` (number of `POST /token` requests).
-- Typical run: `oauth_token_posts` is 0 → 1 after the first batch of topology calls (reuse while the token is valid), then 1 → 2 after `sleep 50` and more calls past expiry.
-- Inspect the cache from the app container: `credentials.yaml` is mounted read-only there (`daprd` is distroless).
+This repro includes three Deployments:
 
-Layout:
+- OAuth mock — issues tokens; `GET /stats` returns `oauth_token_posts`.
+- Zeebe mock — minimal gRPC gateway (no real Camunda cluster).
+- App — workload plus `daprd` (Zeebe binding, writes the credential cache).
 
-- OAuth mock — fake token issuer (`POST /token`, `/stats`); mirrors identity separate from the broker.
-- Zeebe mock — fake Zeebe gateway (gRPC); no real Camunda cluster needed.
-- `k8s/oauth-mock.yaml`, `k8s/zeebe-mock.yaml`, `k8s/app.yaml` — one Deployment each: the two mocks are those backends; `app` is the workload plus `daprd` (Zeebe binding, credential cache).
+Manifests: `k8s/oauth-mock.yaml`, `k8s/zeebe-mock.yaml`, `k8s/app.yaml`. Use comma-separated `dapr.io/env` `KEY=value` pairs in `k8s/app.yaml` so `ZEEBE_*` reach the sidecar.
 
----
+## Prerequisites
 
-## Setup
+- `kubectl`, Docker, a local Kubernetes cluster (e.g. Minikube)
+- Dapr on the cluster: `dapr init -k` (`dapr-system` namespace)
 
-Prerequisites: `kubectl`, Minikube (or similar), Docker, Dapr on the cluster (`dapr init -k` → `dapr-system`). `dapr.io/env` must be comma-separated `KEY=value` (not JSON) so `ZEEBE_*` reach `daprd` — see `k8s/app.yaml`.
+## Deploy
 
-Build mocks (Minikube: `eval $(minikube docker-env)`), from repo root:
+From the repo root, build images into the cluster’s Docker (Minikube example):
 
 ```bash
 eval $(minikube docker-env)
@@ -35,56 +32,65 @@ kubectl apply -f k8s/00-namespace.yaml -f k8s/oauth-mock.yaml -f k8s/zeebe-mock.
   -f k8s/dapr-config.yaml -f k8s/component-zeebe.yaml -f k8s/app.yaml
 ```
 
-Wait for rollouts. Persistence: `emptyDir` `camunda-cache` at `/camunda`; `daprd` writes `/camunda/credentials.yaml`. The app mounts it read-only — e.g. `kubectl exec -n zeebe-token-repro -c app <pod> -- cat /camunda/credentials.yaml`.
+Wait for rollouts. `daprd` uses an `emptyDir` at `/camunda` for `credentials.yaml`; the app container mounts it read-only.
 
-After changing `stack/oauth-mock/app.py`: rebuild the image, `kubectl apply -f k8s/oauth-mock.yaml`, rollout restart `oauth-mock`.
-
----
+After editing `stack/oauth-mock/app.py`, rebuild the OAuth image, re-apply `k8s/oauth-mock.yaml`, and restart the `oauth-mock` Deployment.
 
 ## Run
 
-Port-forwards (two terminals): `zeebe-test-app` on 3500, `oauth-mock` on 8080 → localhost.
+1. Port-forward (two terminals):
 
-```bash
-kubectl port-forward -n zeebe-token-repro svc/zeebe-test-app 3500:3500
-kubectl port-forward -n zeebe-token-repro svc/oauth-mock 8080:8080
-```
+   ```bash
+   kubectl port-forward -n zeebe-token-repro svc/zeebe-test-app 3500:3500
+   kubectl port-forward -n zeebe-token-repro svc/oauth-mock 8080:8080
+   ```
 
-Third terminal:
+2. In a third terminal, call stats, invoke topology several times, stats again, wait past expiry, invoke again:
 
-```bash
-curl -s http://127.0.0.1:8080/stats
+   ```bash
+   curl -s http://127.0.0.1:8080/stats
 
-for i in 1 2 3 4 5; do
-  curl -sf -X POST http://127.0.0.1:3500/v1.0/bindings/zeebe-cmd \
-    -H 'Content-Type: application/json' \
-    -d '{"operation":"topology","metadata":{},"data":{}}' -o /dev/null && echo ok
-done
+   for i in 1 2 3 4 5; do
+     curl -sf -X POST http://127.0.0.1:3500/v1.0/bindings/zeebe-cmd \
+       -H 'Content-Type: application/json' \
+       -d '{"operation":"topology","metadata":{},"data":{}}' -o /dev/null && echo ok
+   done
 
-curl -s http://127.0.0.1:8080/stats
+   curl -s http://127.0.0.1:8080/stats
 
-sleep 50
+   sleep 50
 
-for i in 1 2 3; do
-  curl -sf -X POST http://127.0.0.1:3500/v1.0/bindings/zeebe-cmd \
-    -H 'Content-Type: application/json' \
-    -d '{"operation":"topology","metadata":{},"data":{}}' -o /dev/null && echo ok
-done
+   for i in 1 2 3; do
+     curl -sf -X POST http://127.0.0.1:3500/v1.0/bindings/zeebe-cmd \
+       -H 'Content-Type: application/json' \
+       -d '{"operation":"topology","metadata":{},"data":{}}' -o /dev/null && echo ok
+   done
 
-curl -s http://127.0.0.1:8080/stats
-```
+   curl -s http://127.0.0.1:8080/stats
+   ```
 
-Inspect: `POD=$(kubectl get pod -n zeebe-token-repro -l app=zeebe-test-app -o jsonpath='{.items[0].metadata.name}')` then run:
+3. Optional — read the cache from the app container (`daprd` is distroless):
 
-`kubectl exec -n zeebe-token-repro -c app "$POD" -- cat /camunda/credentials.yaml`
+   ```bash
+   POD=$(kubectl get pod -n zeebe-token-repro -l app=zeebe-test-app -o jsonpath='{.items[0].metadata.name}')
+   kubectl exec -n zeebe-token-repro -c app "$POD" -- cat /camunda/credentials.yaml
+   ```
 
-```yaml
-zeebe-audience:
-    auth:
-        credentials:
-            accesstoken: mock-access-token
-            tokentype: Bearer
-            refreshtoken: ""
-            expiry: 2026-04-02T11:30:19.963171047Z
-            expiresin: 0
-```
+   Example output (expiry timestamps will differ):
+
+   ```yaml
+   zeebe-audience:
+       auth:
+           credentials:
+               accesstoken: mock-access-token
+               tokentype: Bearer
+               refreshtoken: ""
+               expiry: 2026-04-02T11:30:19.963171047Z
+               expiresin: 0
+   ```
+
+You should see `oauth_token_posts` go from 0 → 1 after the first batch (token reuse), then 1 → 2 after `sleep 50` and more topology calls once the short-lived token expires.
+
+## Configuration
+
+Zeebe binding and Dapr config live in `k8s/component-zeebe.yaml` and `k8s/dapr-config.yaml`.
