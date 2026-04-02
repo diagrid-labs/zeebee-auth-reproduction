@@ -1,4 +1,3 @@
-// Minimal Zeebe gRPC gateway mock (Topology only) for stack tests. Built by Dockerfile — not an entrypoint for humans.
 package main
 
 import (
